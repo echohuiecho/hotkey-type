@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import Settings from "./Settings";
 import "./App.css";
 
@@ -20,6 +21,22 @@ export default function App() {
   const lastHandledRef = useRef<number>(0);
   const recordingRef = useRef<boolean>(false);
   const lastPathRef = useRef<string | null>(null);
+
+  // Drag handler
+  const handleDragStart = async (e: React.MouseEvent) => {
+    // Don't drag if clicking on interactive elements
+    const target = e.target as HTMLElement;
+    if (target.tagName === "BUTTON" || target.tagName === "INPUT" || target.tagName === "A") {
+      return;
+    }
+
+    try {
+      const window = getCurrentWindow();
+      await window.startDragging();
+    } catch (error) {
+      console.error("Failed to start dragging:", error);
+    }
+  };
 
   // Load settings on mount
   useEffect(() => {
@@ -174,8 +191,16 @@ export default function App() {
 
   if (view === "settings") {
     return (
-      <div>
-        <div style={{ padding: "8px 16px", borderBottom: "1px solid #eee", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div onMouseDown={handleDragStart} style={{ cursor: "grab" }}>
+        <div
+          style={{
+            padding: "8px 16px",
+            borderBottom: "1px solid #eee",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
           <div style={{ fontSize: 14, fontWeight: 500 }}>Settings</div>
           <button
             onClick={() => {
@@ -200,8 +225,10 @@ export default function App() {
   }
 
   return (
-    <div style={{ padding: 16, fontFamily: "system-ui" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+    <div onMouseDown={handleDragStart} style={{ padding: 16, fontFamily: "system-ui", cursor: "grab" }}>
+      <div
+        style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}
+      >
         <div style={{ fontSize: 14, opacity: 0.7 }}>Dictation Panel</div>
         <button
           onClick={() => {
