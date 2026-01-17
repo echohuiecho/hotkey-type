@@ -5,6 +5,7 @@
   "windows": ["main"],
   "permissions": [
     "core:event:allow-listen",
+    "core:event:allow-emit",
     "global-shortcut:allow-is-registered",
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",

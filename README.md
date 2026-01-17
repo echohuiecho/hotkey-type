@@ -30,47 +30,70 @@ One-line description: A cross-platform desktop dictation tool that uses global h
   - Proper event handling
 - [x] System tray integration
   - Tray icon with menu
-  - Menu items: Start/Stop Dictation, Show Panel, Quit
+  - Menu items: Start/Stop Dictation, Show Panel, Settings, Quit
 - [x] Event system
   - Rust backend emits events to frontend
   - Frontend listens and updates UI state
   - Proper event permissions configured
 - [x] State management
-  - Phase transitions: `IDLE` → `RECORDING` → `PROCESSING` → `IDLE`
+  - Phase transitions: `IDLE` → `RECORDING` → `TRANSCRIBING` → `PASTING` → `DONE`
   - Debouncing to prevent duplicate triggers
   - Visual feedback in panel
+
+### Audio Recording
+- [x] Audio recording functionality
+  - Start/stop recording on hotkey press
+  - Audio format: mono, 16-bit PCM WAV
+  - Uses `cpal` for cross-platform audio capture
+  - Uses `hound` for WAV file writing
+  - Saves to app cache directory
+
+### Cloud Transcription
+- [x] OpenAI Whisper API integration
+  - Supports `/v1/audio/transcriptions` endpoint
+  - Multipart form data upload
+  - Error handling and status reporting
+  - Model: `whisper-1` (default)
+
+### Auto-Paste Functionality
+- [x] Automatic paste after transcription
+  - Writes to clipboard first (fallback)
+  - Simulates ⌘V (macOS) or Ctrl+V (Windows/Linux)
+  - Uses `enigo` for keyboard simulation
+  - Falls back to clipboard if paste simulation fails
+
+### Settings Panel
+- [x] Settings UI
+  - OpenAI API Key input (password field)
+  - Settings stored in `app_config_dir/settings.json`
+  - Accessible via tray menu or panel button
+  - Auto-reloads settings after save
 
 ### Permissions & Capabilities
 - [x] Global shortcut permissions
 - [x] Clipboard manager permissions
 - [x] Event listening permissions
 - [x] macOS accessibility permissions (for global shortcuts)
+- [x] macOS microphone permissions (`NSMicrophoneUsageDescription` in Info.plist)
 
 ## 🚧 In Progress / TODO
 
-### MVP Core Features
-- [ ] Audio recording functionality
-  - Start/stop recording on hotkey press
-  - Audio format: mono, 16k/48k
-  - Save audio buffer for transcription
-- [ ] Cloud transcription integration
-  - OpenAI Whisper API
+### Future Enhancements
+- [ ] Additional transcription providers
   - Google Speech-to-Text API
-  - Error handling and retry logic
-- [ ] Auto-paste functionality
-  - Detect current cursor position
-  - Paste transcribed text automatically
-  - Fallback to clipboard copy
-- [ ] Settings panel
-  - Provider selection (OpenAI / Google)
-  - API key input and secure storage (Keychain/Credential Vault)
+  - Azure Speech Services
+  - Local Whisper models
+- [ ] Advanced settings
+  - Provider selection (OpenAI / Google / etc.)
   - Custom hotkey configuration
   - Language selection (auto-detect / specific language)
+  - Model selection for OpenAI
 - [ ] History feature
   - Store: timestamp, text, provider, model, duration
   - Recent 50 entries
   - Clear history option
   - Basic history UI
+  - Export history
 
 ### User Experience
 - [ ] Recording animation in panel
@@ -94,18 +117,28 @@ npm run tauri build
 
 ## 🔧 Configuration
 
-### macOS Permissions
+### First-Time Setup
 
-On macOS, you need to grant accessibility permissions for global shortcuts:
+1. **Set OpenAI API Key**:
+   - Click the ⚙️ button in the panel, or
+   - Right-click the tray icon → Settings
+   - Enter your OpenAI API key (get it from [OpenAI Platform](https://platform.openai.com/api-keys))
+   - Click Save
 
-1. Open **System Settings** → **Privacy & Security** → **Accessibility**
-2. Add your app to the list and enable it
+2. **macOS Permissions**:
+   - **Microphone**: The app will prompt you on first use
+   - **Accessibility** (for auto-paste):
+     - Open **System Settings** → **Privacy & Security** → **Accessibility**
+     - Add your app to the list and enable it
+     - This allows the app to simulate ⌘V for automatic pasting
 
 ### Current Hotkey
 
 Default hotkey: `Ctrl+Shift+T`
 
-To change the hotkey, modify `src-tauri/src/lib.rs` (will be configurable via settings in future).
+- Press once to start recording
+- Press again to stop recording and transcribe
+- The transcribed text will be automatically pasted at your cursor position
 
 ## 📁 Project Structure
 
@@ -123,18 +156,27 @@ hotkey-type/
 └── ...
 ```
 
-## 🎨 Current UI States
+## 🎨 UI States
 
 - **IDLE**: App is ready, waiting for hotkey
-- **RECORDING**: Currently recording audio (visual feedback needed)
-- **PROCESSING**: Transcribing audio (visual feedback needed)
+- **RECORDING**: Currently recording audio from microphone
+- **TRANSCRIBING**: Sending audio to OpenAI API for transcription
+- **PASTING**: Automatically pasting transcribed text
+- **DONE**: Transcription complete and pasted (or copied to clipboard)
+- **ERROR**: An error occurred (check console for details)
 
 ## 🔐 Security Notes
 
-- API keys will be stored securely using platform-native keychains:
-  - macOS: Keychain
-  - Windows: Credential Vault
-  - Linux: Secret Service API
+- **API Key Storage**:
+  - Currently stored in `app_config_dir/settings.json` (local file)
+  - Future: Will use platform-native keychains:
+    - macOS: Keychain
+    - Windows: Credential Vault
+    - Linux: Secret Service API
+- **Privacy**:
+  - Audio is recorded locally and sent only to OpenAI API
+  - No audio data is stored permanently (temporary WAV files are deleted)
+  - API key is never shared or transmitted except to OpenAI API
 
 ## 📝 Development Notes
 
@@ -144,22 +186,50 @@ hotkey-type/
 2. Rust handler in `lib.rs` detects the shortcut
 3. Event `dictation-toggle` is emitted to frontend
 4. React component in `App.tsx` receives event
-5. State transitions: `IDLE` → `RECORDING` → `PROCESSING` → `IDLE`
+5. **If IDLE**:
+   - Calls `start_recording()` → state: `RECORDING`
+   - Audio is captured via `cpal` and written to WAV file
+6. **If RECORDING**:
+   - Calls `stop_recording()` → state: `TRANSCRIBING`
+   - WAV file is sent to OpenAI API via `openai_transcribe()`
+   - State: `PASTING` → calls `paste_text()` to simulate paste
+   - State: `DONE` → shows success message
 
-### Adding New Features
+### Key Dependencies
 
-- **Audio recording**: Add Tauri audio plugin or native Rust audio capture
-- **API integration**: Add HTTP client (reqwest) for API calls
-- **Settings**: Create settings window/panel with form inputs
-- **History**: Add SQLite database or JSON file storage
+- **Audio**: `cpal` (0.15) for capture, `hound` (3.5) for WAV writing
+- **HTTP**: `reqwest` (0.12) with multipart support for OpenAI API
+- **Input Simulation**: `enigo` (0.2) for keyboard simulation
+- **Threading**: `crossbeam-channel`, `parking_lot`, `tokio`
+
+### Architecture Notes
+
+- **Audio State**: Uses thread-local storage for `cpal::Stream` (not Send+Sync)
+- **Settings**: Stored in JSON file in app config directory
+- **Error Handling**: Comprehensive error messages shown in UI
+
+## 🚀 Usage
+
+1. **Start the app**: Run `npm run tauri dev` or build and run the app
+2. **Set API key**: Open Settings and enter your OpenAI API key
+3. **Start recording**: Press `Ctrl+Shift+T` (or use tray menu)
+4. **Stop recording**: Press `Ctrl+Shift+T` again
+5. **Auto-paste**: The transcribed text will be automatically pasted at your cursor
+
+### Tips
+
+- If auto-paste fails (e.g., no accessibility permission), the text is still copied to clipboard - just press ⌘V/Ctrl+V manually
+- The app shows the current state in the panel
+- Check the console for detailed error messages if something goes wrong
 
 ## 🤝 Contributing
 
 This is an MVP project. Contributions welcome for:
-- Audio recording implementation
-- Cloud API integration
+- Additional transcription providers (Google, Azure, etc.)
+- History feature implementation
 - UI/UX improvements
 - Cross-platform testing
+- Performance optimizations
 
 ## 📄 License
 
@@ -167,4 +237,4 @@ This is an MVP project. Contributions welcome for:
 
 ---
 
-**Status**: MVP in development - Core infrastructure complete, audio/transcription features pending
+**Status**: ✅ MVP Core Features Complete - Audio recording, OpenAI transcription, and auto-paste are working!
