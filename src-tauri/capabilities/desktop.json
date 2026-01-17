@@ -6,7 +6,8 @@
     "linux"
   ],
   "windows": [
-    "main"
+    "panel",
+    "settings"
   ],
   "permissions": [
     "core:window:allow-start-dragging",

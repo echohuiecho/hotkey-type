@@ -20,22 +20,6 @@ export default function App() {
   const recordingRef = useRef<boolean>(false);
   const lastPathRef = useRef<string | null>(null);
 
-  // Drag handler
-  const handleDragStart = async (e: React.MouseEvent) => {
-    // Don't drag if clicking on interactive elements
-    const target = e.target as HTMLElement;
-    if (target.tagName === "BUTTON" || target.tagName === "INPUT" || target.tagName === "A") {
-      return;
-    }
-
-    try {
-      const window = getCurrentWindow();
-      await window.startDragging();
-    } catch (error) {
-      console.error("Failed to start dragging:", error);
-    }
-  };
-
   // Get window label on mount
   useEffect(() => {
     const initWindow = async () => {
@@ -243,63 +227,90 @@ export default function App() {
       }
     };
 
+    const startDrag = async (e: React.PointerEvent | React.MouseEvent) => {
+      // Only left click / primary pointer
+      if ("button" in e && typeof e.button === "number" && e.button !== 0) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        await getCurrentWindow().startDragging();
+      } catch (err) {
+        console.error("Failed to start dragging:", err);
+      }
+    };
+
     return (
       <div
-        onMouseDown={handleDragStart}
+        data-tauri-drag-region
+        onPointerDown={startDrag}
+        onMouseDown={startDrag}
         style={{
-          width: 64,
-          height: 64,
-          borderRadius: "50%",
-          backgroundColor: phase === "RECORDING" ? "rgba(255, 68, 68, 0.25)" : "rgba(0, 0, 0, 0.08)",
+          width: "100vw",
+          height: "100vh",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           cursor: "grab",
-          fontFamily: "system-ui",
-          position: "relative",
-          transition: "all 0.2s ease",
-          userSelect: "none",
+          overflow: "hidden",
         }}
       >
-        {phase === "RECORDING" && (
-          <div
-            style={{
-              width: 12,
-              height: 12,
-              borderRadius: "50%",
-              backgroundColor: "#ff4444",
-              animation: "pulse 1.5s ease-in-out infinite",
-            }}
-          />
-        )}
-        {phase === "IDLE" && (
-          <div style={{ fontSize: 20, opacity: 0.6 }}>🎤</div>
-        )}
-        {phase !== "IDLE" && phase !== "RECORDING" && (
-          <div style={{ fontSize: 12, color: getStatusColor(), fontWeight: "bold" }}>
-            {phase === "TRANSCRIBING" ? "⏳" : phase === "PASTING" ? "📋" : phase === "DONE" ? "✓" : "⚠"}
-          </div>
-        )}
-        {message && (
-          <div
-            style={{
-              position: "absolute",
-              top: -30,
-              left: "50%",
-              transform: "translateX(-50%)",
-              fontSize: 10,
-              color: phase === "ERROR" ? "#ff4444" : "#666",
-              whiteSpace: "nowrap",
-              backgroundColor: "rgba(255, 255, 255, 0.95)",
-              padding: "2px 6px",
-              borderRadius: 4,
-              boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
-              pointerEvents: "none",
-            }}
-          >
-            {message.length > 20 ? message.substring(0, 20) + "..." : message}
-          </div>
-        )}
+        <div
+          style={{
+            width: 64,
+            height: 64,
+            borderRadius: "50%",
+            backgroundColor: phase === "RECORDING" ? "rgba(255, 68, 68, 0.25)" : "rgba(0, 0, 0, 0.08)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontFamily: "system-ui",
+            position: "relative",
+            transition: "all 0.2s ease",
+            userSelect: "none",
+            pointerEvents: "none",
+          }}
+        >
+          {phase === "RECORDING" && (
+            <div
+              style={{
+                width: 12,
+                height: 12,
+                borderRadius: "50%",
+                backgroundColor: "#ff4444",
+                animation: "pulse 1.5s ease-in-out infinite",
+              }}
+            />
+          )}
+          {phase === "IDLE" && (
+            <div style={{ fontSize: 20, opacity: 0.6 }}>🎤</div>
+          )}
+          {phase !== "IDLE" && phase !== "RECORDING" && (
+            <div style={{ fontSize: 12, color: getStatusColor(), fontWeight: "bold" }}>
+              {phase === "TRANSCRIBING" ? "⏳" : phase === "PASTING" ? "📋" : phase === "DONE" ? "✓" : "⚠"}
+            </div>
+          )}
+          {message && (
+            <div
+              style={{
+                position: "absolute",
+                top: -30,
+                left: "50%",
+                transform: "translateX(-50%)",
+                fontSize: 10,
+                color: phase === "ERROR" ? "#ff4444" : "#666",
+                whiteSpace: "nowrap",
+                backgroundColor: "rgba(255, 255, 255, 0.95)",
+                padding: "2px 6px",
+                borderRadius: 4,
+                boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+                pointerEvents: "none",
+              }}
+            >
+              {message.length > 20 ? message.substring(0, 20) + "..." : message}
+            </div>
+          )}
+        </div>
       </div>
     );
   }
