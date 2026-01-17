@@ -359,19 +359,13 @@ pub fn run() {
                 if shortcut == expected && event.state() == ShortcutState::Pressed {
                   eprintln!("✓ Matching shortcut detected, emitting toggle event");
                   // Use app.emit to send to all windows, or window.emit for specific window
-                  match app.emit("dictation-toggle", ()) {
-                    Ok(_) => eprintln!("  → Event 'dictation-toggle' emitted successfully (app.emit)"),
-                    Err(e) => {
-                      eprintln!("  ✗ Failed to emit via app.emit: {:?}, trying window.emit", e);
-                      if let Some(w) = app.get_webview_window("main") {
-                        match w.emit("dictation-toggle", ()) {
-                          Ok(_) => eprintln!("  → Event 'dictation-toggle' emitted successfully (window.emit)"),
-                          Err(e2) => eprintln!("  ✗ Failed to emit via window.emit: {:?}", e2),
-                        }
-                      } else {
-                        eprintln!("✗ Window 'main' not found");
-                      }
+                  if let Some(w) = app.get_webview_window("panel") {
+                    match w.emit("dictation-toggle", ()) {
+                      Ok(_) => eprintln!("  → Event 'dictation-toggle' emitted successfully (window.emit)"),
+                      Err(e) => eprintln!("  ✗ Failed to emit via window.emit: {:?}", e),
                     }
+                  } else {
+                    eprintln!("✗ Window 'panel' not found");
                   }
                 } else {
                   eprintln!("✗ Shortcut mismatch or wrong state");
@@ -406,21 +400,20 @@ pub fn run() {
           .show_menu_on_left_click(false)
           .on_menu_event(move |app, event| match event.id.as_ref() {
             "toggle" => {
-              if let Some(w) = app.get_webview_window("main") {
+              if let Some(w) = app.get_webview_window("panel") {
                 let _ = w.emit("dictation-toggle", ());
               }
             }
             "show" => {
-              if let Some(w) = app.get_webview_window("main") {
+              if let Some(w) = app.get_webview_window("panel") {
                 let _ = w.show();
                 let _ = w.set_focus();
               }
             }
             "settings" => {
-              if let Some(w) = app.get_webview_window("main") {
+              if let Some(w) = app.get_webview_window("settings") {
                 let _ = w.show();
                 let _ = w.set_focus();
-                let _ = w.emit("open-settings", ());
               }
             }
             "quit" => {

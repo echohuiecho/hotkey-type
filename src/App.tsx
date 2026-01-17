@@ -6,16 +6,14 @@ import Settings from "./Settings";
 import "./App.css";
 
 type Phase = "IDLE" | "RECORDING" | "TRANSCRIBING" | "PASTING" | "DONE" | "ERROR";
-type View = "main" | "settings";
 
 interface Settings {
   openai_api_key: string;
 }
 
 export default function App() {
-  const [view, setView] = useState<View>("main");
+  const [windowLabel, setWindowLabel] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("IDLE");
-  const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string>("");
   const [apiKey, setApiKey] = useState<string>("");
   const lastHandledRef = useRef<number>(0);
@@ -38,24 +36,41 @@ export default function App() {
     }
   };
 
+  // Get window label on mount
+  useEffect(() => {
+    const initWindow = async () => {
+      try {
+        const window = getCurrentWindow();
+        const label = window.label;
+        setWindowLabel(label);
+      } catch (e) {
+        console.error("Failed to get window label:", e);
+      }
+    };
+    initWindow();
+  }, []);
+
+  useEffect(() => {
+    if (windowLabel !== "panel") {
+      return;
+    }
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+    document.body.style.margin = "0";
+    document.body.style.background = "transparent";
+  }, [windowLabel]);
+
   // Load settings on mount
   useEffect(() => {
     loadSettings();
 
-    // Listen for open-settings event from tray menu
-    const unlisten1 = listen("open-settings", () => {
-      setView("settings");
-      loadSettings();
-    });
-
     // Listen for settings-updated event
-    const unlisten2 = listen("settings-updated", () => {
+    const unlisten = listen("settings-updated", () => {
       loadSettings();
     });
 
     return () => {
-      unlisten1.then((fn) => fn());
-      unlisten2.then((fn) => fn());
+      unlisten.then((fn) => fn());
     };
   }, []);
 
@@ -68,7 +83,12 @@ export default function App() {
     }
   };
 
+  // Only set up dictation toggle listener for panel window
   useEffect(() => {
+    if (windowLabel !== "panel") {
+      return;
+    }
+
     console.log("Setting up event listener for 'dictation-toggle'...");
 
     let unlistenFn: (() => void) | null = null;
@@ -89,7 +109,6 @@ export default function App() {
           // Start recording
           recordingRef.current = true;
           setPhase("RECORDING");
-          setError(null);
           setMessage("Recording...");
 
           const path = await invoke<string>("start_recording");
@@ -126,7 +145,6 @@ export default function App() {
 
           if (!text || text.trim().length === 0) {
             setPhase("ERROR");
-            setError("No text transcribed");
             setMessage("No text was transcribed from the audio");
             return;
           }
@@ -155,14 +173,12 @@ export default function App() {
         recordingRef.current = false;
         setPhase("ERROR");
         const errorMsg = e instanceof Error ? e.message : String(e);
-        setError(errorMsg);
         setMessage(`Error: ${errorMsg}`);
         console.error("Dictation error:", e);
 
         // Auto return to IDLE after 3 seconds on error
         setTimeout(() => {
           setPhase("IDLE");
-          setError(null);
           setMessage("");
         }, 3000);
       }
@@ -187,11 +203,12 @@ export default function App() {
         console.log("Event listener unregistered");
       }
     };
-  }, []);
+  }, [windowLabel]);
 
-  if (view === "settings") {
+  // Render Settings window
+  if (windowLabel === "settings") {
     return (
-      <div onMouseDown={handleDragStart} style={{ cursor: "grab" }}>
+      <div style={{ fontFamily: "system-ui", height: "100vh", overflow: "auto" }}>
         <div
           style={{
             padding: "8px 16px",
@@ -202,72 +219,95 @@ export default function App() {
           }}
         >
           <div style={{ fontSize: 14, fontWeight: 500 }}>Settings</div>
-          <button
-            onClick={() => {
-              setView("main");
-              loadSettings();
-            }}
-            style={{
-              padding: "4px 12px",
-              fontSize: 12,
-              backgroundColor: "transparent",
-              border: "1px solid #ddd",
-              borderRadius: 4,
-              cursor: "pointer",
-            }}
-          >
-            Back
-          </button>
         </div>
         <Settings />
       </div>
     );
   }
 
-  return (
-    <div onMouseDown={handleDragStart} style={{ padding: 16, fontFamily: "system-ui", cursor: "grab" }}>
+  // Render Panel window (circular floating panel)
+  if (windowLabel === "panel") {
+    const getStatusColor = () => {
+      switch (phase) {
+        case "RECORDING":
+          return "#ff4444";
+        case "ERROR":
+          return "#ff8800";
+        case "TRANSCRIBING":
+        case "PASTING":
+          return "#007AFF";
+        case "DONE":
+          return "#28a745";
+        default:
+          return "#666";
+      }
+    };
+
+    return (
       <div
-        style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}
+        onMouseDown={handleDragStart}
+        style={{
+          width: 64,
+          height: 64,
+          borderRadius: "50%",
+          backgroundColor: phase === "RECORDING" ? "rgba(255, 68, 68, 0.25)" : "rgba(0, 0, 0, 0.08)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "grab",
+          fontFamily: "system-ui",
+          position: "relative",
+          transition: "all 0.2s ease",
+          userSelect: "none",
+        }}
       >
-        <div style={{ fontSize: 14, opacity: 0.7 }}>Dictation Panel</div>
-        <button
-          onClick={() => {
-            setView("settings");
-            loadSettings();
-          }}
-          style={{
-            padding: "4px 8px",
-            fontSize: 11,
-            backgroundColor: "transparent",
-            border: "1px solid #ddd",
-            borderRadius: 4,
-            cursor: "pointer",
-            opacity: 0.7,
-          }}
-          title="Open Settings"
-        >
-          ⚙️
-        </button>
+        {phase === "RECORDING" && (
+          <div
+            style={{
+              width: 12,
+              height: 12,
+              borderRadius: "50%",
+              backgroundColor: "#ff4444",
+              animation: "pulse 1.5s ease-in-out infinite",
+            }}
+          />
+        )}
+        {phase === "IDLE" && (
+          <div style={{ fontSize: 20, opacity: 0.6 }}>🎤</div>
+        )}
+        {phase !== "IDLE" && phase !== "RECORDING" && (
+          <div style={{ fontSize: 12, color: getStatusColor(), fontWeight: "bold" }}>
+            {phase === "TRANSCRIBING" ? "⏳" : phase === "PASTING" ? "📋" : phase === "DONE" ? "✓" : "⚠"}
+          </div>
+        )}
+        {message && (
+          <div
+            style={{
+              position: "absolute",
+              top: -30,
+              left: "50%",
+              transform: "translateX(-50%)",
+              fontSize: 10,
+              color: phase === "ERROR" ? "#ff4444" : "#666",
+              whiteSpace: "nowrap",
+              backgroundColor: "rgba(255, 255, 255, 0.95)",
+              padding: "2px 6px",
+              borderRadius: 4,
+              boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+              pointerEvents: "none",
+            }}
+          >
+            {message.length > 20 ? message.substring(0, 20) + "..." : message}
+          </div>
+        )}
       </div>
-      <div style={{ fontSize: 24, marginTop: 8, fontWeight: "bold" }}>{phase}</div>
-      {message && (
-        <div style={{ marginTop: 8, fontSize: 14, color: phase === "ERROR" ? "#ff4444" : "#666" }}>
-          {message}
-        </div>
-      )}
-      {error && (
-        <div style={{ marginTop: 8, fontSize: 12, color: "#ff4444" }}>
-          {error}
-        </div>
-      )}
-      <div style={{ marginTop: 8, fontSize: 12, opacity: 0.6 }}>
-        Press Ctrl+Shift+T to toggle
-      </div>
-      {!apiKey || apiKey.trim().length === 0 ? (
-        <div style={{ marginTop: 8, fontSize: 11, color: "#ff8800" }}>
-          ⚠️ Please set your OpenAI API key in Settings
-        </div>
-      ) : null}
+    );
+  }
+
+  // Loading state while determining window label
+  return (
+    <div style={{ padding: 16, fontFamily: "system-ui" }}>
+      <div>Loading...</div>
     </div>
   );
 }

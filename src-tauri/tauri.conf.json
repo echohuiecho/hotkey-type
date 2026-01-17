@@ -12,10 +12,22 @@
   "app": {
     "windows": [
       {
+        "title": "Settings - hotkey-type",
+        "label": "settings",
+        "width": 800,
+        "height": 600,
+        "resizable": true,
+        "decorations": true,
+        "transparent": false,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "visible": true
+      },
+      {
         "title": "hotkey-type",
-        "label": "main",
-        "width": 360,
-        "height": 140,
+        "label": "panel",
+        "width": 64,
+        "height": 64,
         "resizable": false,
         "decorations": false,
         "transparent": true,
