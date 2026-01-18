@@ -1,0 +1,101 @@
+name: build (mac + win)
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    permissions:
+      contents: write # 只有 tag 時我哋會開 release；唔想開 release 可改 read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS (Apple Silicon runner) - build arm64 dmg
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          # macOS - build intel dmg
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          # Windows x64 - build NSIS setup.exe
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node (LTS)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: "npm"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri -> target
+
+      - name: Install deps
+        run: npm ci
+
+      # 自動對齊版本號：tag 時將 tauri.conf.json version 與 git tag 對齊
+      - name: Sync version from git tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          TAG_VERSION=${GITHUB_REF#refs/tags/v}
+          echo "Updating version to $TAG_VERSION"
+          node -e "
+            const fs = require('fs');
+            const path = 'src-tauri/tauri.conf.json';
+            const config = JSON.parse(fs.readFileSync(path, 'utf8'));
+            config.version = '$TAG_VERSION';
+            fs.writeFileSync(path, JSON.stringify(config, null, 2) + '\n');
+            console.log('Version updated to:', config.version);
+          "
+
+      # Build + bundle via official tauri-action
+      - name: Build bundles
+        uses: tauri-apps/tauri-action@v0
+        with:
+          args: --target ${{ matrix.target }}
+          # 你 project 喺 repo root 就唔使 projectPath
+
+      # Upload as workflow artifacts (download from Actions UI)
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}-${{ matrix.target }}
+          path: |
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+
+  # Optional: on tag push, create a GitHub Release and attach dmg/exe
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Create GitHub Release (attach files)
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: |
+            dist/**/*.dmg
+            dist/**/*-setup.exe
