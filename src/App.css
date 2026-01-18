@@ -21,6 +21,19 @@
   -webkit-text-size-adjust: 100%;
 }
 
+/* Ensure transparent background for panel window */
+body {
+  margin: 0;
+  padding: 0;
+}
+
+/* Panel window specific - transparent background */
+html[data-panel-window="true"],
+html[data-panel-window="true"] body,
+html[data-panel-window="true"] #root {
+  background: transparent !important;
+}
+
 .container {
   margin: 0;
   padding-top: 10vh;

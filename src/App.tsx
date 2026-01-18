@@ -46,10 +46,22 @@ export default function App() {
     if (windowLabel !== "panel") {
       return;
     }
+    // Set data attribute for CSS targeting
+    document.documentElement.setAttribute("data-panel-window", "true");
     document.documentElement.style.overflow = "hidden";
+    document.documentElement.style.background = "transparent";
     document.body.style.overflow = "hidden";
     document.body.style.margin = "0";
     document.body.style.background = "transparent";
+    document.body.style.padding = "0";
+
+    // Also ensure root element is transparent
+    const root = document.getElementById("root");
+    if (root) {
+      root.style.background = "transparent";
+      root.style.margin = "0";
+      root.style.padding = "0";
+    }
   }, [windowLabel]);
 
   // Load settings on mount
@@ -293,6 +305,9 @@ export default function App() {
           justifyContent: "center",
           cursor: "grab",
           overflow: "hidden",
+          background: "transparent",
+          margin: 0,
+          padding: 0,
         }}
       >
         <div
