@@ -845,6 +845,30 @@ pub fn run() {
         }
       }
 
+      // ---------- Window close handler: quit app when settings window closes ----------
+      #[cfg(desktop)]
+      {
+        let app_handle = app.handle().clone();
+        if let Some(settings_window) = app.get_webview_window("settings") {
+          settings_window.on_window_event(move |event| {
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+              eprintln!("Settings window close requested, quitting app");
+              app_handle.exit(0);
+            }
+          });
+        }
+
+        // Prevent panel window from closing independently (should only close when app quits)
+        if let Some(panel_window) = app.get_webview_window("panel") {
+          panel_window.on_window_event(move |event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+              eprintln!("Panel window close requested, preventing close (use Settings window or tray menu to quit)");
+              api.prevent_close();
+            }
+          });
+        }
+      }
+
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
