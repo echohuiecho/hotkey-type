@@ -115,6 +115,10 @@ One-line description: A cross-platform desktop dictation tool that uses global h
 
 ## 📦 Installation
 
+### Prerequisites
+
+1. **Install Tauri CLI**: Run `npm install --global @tauri-apps/cli` in your terminal.
+
 ```bash
 # Install dependencies
 npm install
@@ -125,6 +129,22 @@ npm run tauri dev
 # Build for production
 npm run tauri build
 ```
+
+### Windows User
+
+For Windows users, you need to install Rust before building the project:
+
+1. **Install Rust**:
+   - Download and run the installer from [rustup.rs](https://rustup.rs/)
+   - Or run in PowerShell: `Invoke-WebRequest -useb https://win.rustup.rs/x86_64 | iex`
+   - Follow the installation prompts (default options are recommended)
+   - Restart your terminal/PowerShell after installation
+
+2. **Verify Installation**:
+   ```bash
+   rustc --version
+   cargo --version
+   ```
 
 ## 🔧 Configuration
 
