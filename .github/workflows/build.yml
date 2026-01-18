@@ -71,14 +71,29 @@ jobs:
           args: --target ${{ matrix.target }}
           # 你 project 喺 repo root 就唔使 projectPath
 
+      # 列出輸出檔案（debug 用）
+      - name: List bundle output
+        if: runner.os != 'Windows'
+        run: |
+          ls -la src-tauri/target || true
+          ls -la src-tauri/target/${{ matrix.target }}/release/bundle || true
+          find src-tauri/target -maxdepth 5 -type d -name bundle -print || true
+
+      - name: List bundle output (win)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse -Depth 6 src-tauri\target | Select-Object FullName
+
       # Upload as workflow artifacts (download from Actions UI)
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os }}-${{ matrix.target }}
+          if-no-files-found: error
           path: |
-            src-tauri/target/release/bundle/dmg/*.dmg
-            src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/**/release/bundle/dmg/*.dmg
+            src-tauri/target/**/release/bundle/nsis/*-setup.exe
 
   # Optional: on tag push, create a GitHub Release and attach dmg/exe
   release:
