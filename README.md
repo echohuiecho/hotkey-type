@@ -22,7 +22,9 @@ One-line description: A cross-platform desktop dictation tool that uses global h
   - Always-on-top
   - Transparent background
   - No window decorations
-  - Size: 360x140px
+  - Size: 64x64px (circular floating panel)
+  - Positioned in bottom-right corner by default (64px margin)
+  - Draggable to reposition
   - macOS Private API enabled for transparency
 - [x] Global hotkey registration
   - Default: `Ctrl+Shift+T`
@@ -54,6 +56,13 @@ One-line description: A cross-platform desktop dictation tool that uses global h
   - Multipart form data upload
   - Error handling and status reporting
   - Model: `whisper-1` (default)
+- [x] Google Speech-to-Text API V2 integration
+  - Supports `v1p1beta1/speech:recognize` endpoint
+  - Base64-encoded audio content
+  - Configurable language codes (dropdown with actual Google codes)
+  - Automatic punctuation enabled by default
+  - Model: `default`
+  - LINEAR16 encoding (16-bit PCM)
 
 ### Auto-Paste Functionality
 - [x] Automatic paste after transcription
@@ -64,7 +73,10 @@ One-line description: A cross-platform desktop dictation tool that uses global h
 
 ### Settings Panel
 - [x] Settings UI
+  - Provider selection (OpenAI / Google)
   - OpenAI API Key input (password field)
+  - Google API Key input (password field)
+  - Google language code selection (dropdown with actual Google language codes)
   - Settings stored in `app_config_dir/settings.json`
   - Accessible via tray menu or panel button
   - Auto-reloads settings after save
@@ -80,14 +92,13 @@ One-line description: A cross-platform desktop dictation tool that uses global h
 
 ### Future Enhancements
 - [ ] Additional transcription providers
-  - Google Speech-to-Text API
   - Azure Speech Services
   - Local Whisper models
 - [ ] Advanced settings
-  - Provider selection (OpenAI / Google / etc.)
   - Custom hotkey configuration
-  - Language selection (auto-detect / specific language)
+  - Language selection for OpenAI (auto-detect / specific language)
   - Model selection for OpenAI
+  - Service Account JSON support for Google (OAuth-based authentication)
 - [ ] History feature
   - Store: timestamp, text, provider, model, duration
   - Recent 50 entries
@@ -119,10 +130,12 @@ npm run tauri build
 
 ### First-Time Setup
 
-1. **Set OpenAI API Key**:
+1. **Choose Transcription Provider and Set API Key**:
    - Click the ⚙️ button in the panel, or
    - Right-click the tray icon → Settings
-   - Enter your OpenAI API key (get it from [OpenAI Platform](https://platform.openai.com/api-keys))
+   - Select your preferred provider:
+     - **OpenAI**: Enter your OpenAI API key (get it from [OpenAI Platform](https://platform.openai.com/api-keys))
+     - **Google**: Enter your Google Cloud API key (get it from [Google Cloud Console](https://console.cloud.google.com/apis/credentials)) and select a language code from the dropdown
    - Click Save
 
 2. **macOS Permissions**:
@@ -160,7 +173,7 @@ hotkey-type/
 
 - **IDLE**: App is ready, waiting for hotkey
 - **RECORDING**: Currently recording audio from microphone
-- **TRANSCRIBING**: Sending audio to OpenAI API for transcription
+- **TRANSCRIBING**: Sending audio to selected provider (OpenAI or Google) for transcription
 - **PASTING**: Automatically pasting transcribed text
 - **DONE**: Transcription complete and pasted (or copied to clipboard)
 - **ERROR**: An error occurred (check console for details)
@@ -174,9 +187,9 @@ hotkey-type/
     - Windows: Credential Vault
     - Linux: Secret Service API
 - **Privacy**:
-  - Audio is recorded locally and sent only to OpenAI API
+  - Audio is recorded locally and sent only to the selected transcription provider (OpenAI or Google)
   - No audio data is stored permanently (temporary WAV files are deleted)
-  - API key is never shared or transmitted except to OpenAI API
+  - API keys are never shared or transmitted except to the respective provider APIs
 
 ## 📝 Development Notes
 
@@ -191,14 +204,17 @@ hotkey-type/
    - Audio is captured via `cpal` and written to WAV file
 6. **If RECORDING**:
    - Calls `stop_recording()` → state: `TRANSCRIBING`
-   - WAV file is sent to OpenAI API via `openai_transcribe()`
+   - WAV file is sent to selected provider API:
+     - OpenAI: `openai_transcribe()` (multipart form upload)
+     - Google: `google_transcribe()` (base64-encoded JSON)
    - State: `PASTING` → calls `paste_text()` to simulate paste
    - State: `DONE` → shows success message
 
 ### Key Dependencies
 
 - **Audio**: `cpal` (0.15) for capture, `hound` (3.5) for WAV writing
-- **HTTP**: `reqwest` (0.12) with multipart support for OpenAI API
+- **HTTP**: `reqwest` (0.12) with multipart and JSON support for API calls
+- **Encoding**: `base64` for Google Speech-to-Text API
 - **Input Simulation**: `enigo` (0.2) for keyboard simulation
 - **Threading**: `crossbeam-channel`, `parking_lot`, `tokio`
 
@@ -211,7 +227,10 @@ hotkey-type/
 ## 🚀 Usage
 
 1. **Start the app**: Run `npm run tauri dev` or build and run the app
-2. **Set API key**: Open Settings and enter your OpenAI API key
+2. **Configure settings**: Open Settings and:
+   - Select your transcription provider (OpenAI or Google)
+   - Enter the corresponding API key
+   - If using Google, select your language code from the dropdown
 3. **Start recording**: Press `Ctrl+Shift+T` (or use tray menu)
 4. **Stop recording**: Press `Ctrl+Shift+T` again
 5. **Auto-paste**: The transcribed text will be automatically pasted at your cursor
@@ -237,4 +256,4 @@ This is an MVP project. Contributions welcome for:
 
 ---
 
-**Status**: ✅ MVP Core Features Complete - Audio recording, OpenAI transcription, and auto-paste are working!
+**Status**: ✅ MVP Core Features Complete - Audio recording, multi-provider transcription (OpenAI & Google), and auto-paste are working!
