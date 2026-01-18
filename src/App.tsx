@@ -13,6 +13,7 @@ interface Settings {
   google_api_key: string;
   google_language: string;
   input_device_name: string;
+  panel_visible?: boolean;
 }
 
 export default function App() {

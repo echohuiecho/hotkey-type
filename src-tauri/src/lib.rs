@@ -53,7 +53,7 @@ fn start_recording(app: tauri::AppHandle) -> Result<String, String> {
 
   // Get settings to check for preferred input device
   let settings = get_settings(app.clone())?;
-  
+
   let host = cpal::default_host();
   let device = if settings.input_device_name.is_empty() {
     // Use default device
@@ -93,7 +93,7 @@ fn start_recording(app: tauri::AppHandle) -> Result<String, String> {
 
   let sample_rate = config.sample_rate().0;
   let channels = config.channels() as usize;
-  
+
   eprintln!("Start recording: sample_rate: {}, channels: {}, format: {:?}", sample_rate, channels, config.sample_format());
 
   let (tx, rx) = crossbeam_channel::unbounded::<Vec<i16>>();
@@ -143,19 +143,19 @@ fn start_recording(app: tauri::AppHandle) -> Result<String, String> {
             let v = frame[0].clamp(-1.0, 1.0);
             mono.push((v * i16::MAX as f32) as i16);
           }
-          
+
           let chunk_num = {
             let mut count = chunks_received_cb.lock();
             *count += 1;
             *count
           };
-          
+
           // Log first few chunks to verify audio is being captured
           if chunk_num <= 3 {
             let max_amp = mono.iter().map(|&s| s.abs()).max().unwrap_or(0);
             eprintln!("Audio chunk #{}: {} samples, max amplitude: {}", chunk_num, mono.len(), max_amp);
           }
-          
+
           let _ = tx_cb.send(mono);
         },
         err_fn,
@@ -172,19 +172,19 @@ fn start_recording(app: tauri::AppHandle) -> Result<String, String> {
           for frame in data.chunks(channels) {
             mono.push(frame[0]);
           }
-          
+
           let chunk_num = {
             let mut count = chunks_received_cb.lock();
             *count += 1;
             *count
           };
-          
+
           // Log first few chunks to verify audio is being captured
           if chunk_num <= 3 {
             let max_amp = mono.iter().map(|&s| s.abs()).max().unwrap_or(0);
             eprintln!("Audio chunk #{}: {} samples, max amplitude: {}", chunk_num, mono.len(), max_amp);
           }
-          
+
           let _ = tx_cb.send(mono);
         },
         err_fn,
@@ -202,19 +202,19 @@ fn start_recording(app: tauri::AppHandle) -> Result<String, String> {
             let v = frame[0] as i32 - 32768;
             mono.push(v as i16);
           }
-          
+
           let chunk_num = {
             let mut count = chunks_received_cb.lock();
             *count += 1;
             *count
           };
-          
+
           // Log first few chunks to verify audio is being captured
           if chunk_num <= 3 {
             let max_amp = mono.iter().map(|&s| s.abs()).max().unwrap_or(0);
             eprintln!("Audio chunk #{}: {} samples, max amplitude: {}", chunk_num, mono.len(), max_amp);
           }
-          
+
           let _ = tx_cb.send(mono);
         },
         err_fn,
@@ -270,13 +270,13 @@ fn stop_recording() -> Result<RecordingStopped, String> {
   if !path.exists() {
     return Err(format!("Recorded file does not exist: {}", path.to_string_lossy()));
   }
-  
+
   let file_size = std::fs::metadata(&path)
     .map_err(|e| format!("get file metadata: {e}"))?
     .len();
-  
+
   eprintln!("Stop recording: file written, size: {} bytes", file_size);
-  
+
   if file_size == 0 {
     return Err("Recorded file is empty".into());
   }
@@ -300,6 +300,7 @@ struct AppSettings {
   google_api_key: String,
   google_language: String,
   input_device_name: String,
+  panel_visible: bool,
 }
 
 impl Default for AppSettings {
@@ -310,6 +311,7 @@ impl Default for AppSettings {
       google_api_key: String::new(),
       google_language: "en-US".to_string(),
       input_device_name: String::new(), // Empty means use default
+      panel_visible: true, // Default to visible
     }
   }
 }
@@ -318,6 +320,33 @@ impl Default for AppSettings {
 struct InputDevice {
   name: String,
   is_default: bool,
+}
+
+#[tauri::command]
+fn show_panel(app: tauri::AppHandle) -> Result<(), String> {
+  #[cfg(desktop)]
+  {
+    if let Some(panel) = app.get_webview_window("panel") {
+      panel.show().map_err(|e| format!("show panel: {e}"))?;
+      panel.set_focus().map_err(|e| format!("focus panel: {e}"))?;
+    } else {
+      return Err("Panel window not found".to_string());
+    }
+  }
+  Ok(())
+}
+
+#[tauri::command]
+fn hide_panel(app: tauri::AppHandle) -> Result<(), String> {
+  #[cfg(desktop)]
+  {
+    if let Some(panel) = app.get_webview_window("panel") {
+      panel.hide().map_err(|e| format!("hide panel: {e}"))?;
+    } else {
+      return Err("Panel window not found".to_string());
+    }
+  }
+  Ok(())
 }
 
 #[tauri::command]
@@ -366,13 +395,13 @@ async fn openai_transcribe(
   let url = "https://api.openai.com/v1/audio/transcriptions";
 
   eprintln!("OpenAI transcribe: reading file from {}", audio_path);
-  
+
   // On Windows, ensure file is ready by checking existence and size
   let path = std::path::Path::new(&audio_path);
   if !path.exists() {
     return Err(format!("Audio file does not exist: {}", audio_path));
   }
-  
+
   // Small delay on Windows to ensure file is fully flushed
   #[cfg(windows)]
   {
@@ -382,9 +411,9 @@ async fn openai_transcribe(
   let file_bytes = tokio::fs::read(&audio_path)
     .await
     .map_err(|e| format!("read audio: {e}"))?;
-  
+
   eprintln!("OpenAI transcribe: read {} bytes from file", file_bytes.len());
-  
+
   if file_bytes.is_empty() {
     return Err("Audio file is empty".into());
   }
@@ -427,13 +456,13 @@ async fn openai_transcribe(
 
   let v: serde_json::Value = resp.json().await.map_err(|e| format!("json: {e}"))?;
   eprintln!("OpenAI transcribe: response JSON: {:?}", v);
-  
+
   let text = v
     .get("text")
     .and_then(|x| x.as_str())
     .unwrap_or("")
     .to_string();
-  
+
   eprintln!("OpenAI transcribe: extracted text: '{}'", text);
 
   Ok(TranscribeResponse { text })
@@ -448,13 +477,13 @@ async fn google_transcribe(
   enable_automatic_punctuation: Option<bool>,
 ) -> Result<TranscribeResponse, String> {
   eprintln!("Google transcribe: reading file from {}", audio_path);
-  
+
   // On Windows, ensure file is ready by checking existence
   let path = std::path::Path::new(&audio_path);
   if !path.exists() {
     return Err(format!("Audio file does not exist: {}", audio_path));
   }
-  
+
   // Small delay on Windows to ensure file is fully flushed
   #[cfg(windows)]
   {
@@ -464,9 +493,9 @@ async fn google_transcribe(
   let file_bytes = tokio::fs::read(&audio_path)
     .await
     .map_err(|e| format!("read audio: {e}"))?;
-  
+
   eprintln!("Google transcribe: read {} bytes from file", file_bytes.len());
-  
+
   if file_bytes.is_empty() {
     return Err("Audio file is empty".into());
   }
@@ -475,28 +504,28 @@ async fn google_transcribe(
     hound::WavReader::open(&audio_path).map_err(|e| format!("wav open: {e}"))?;
   let spec = wav_reader.spec();
   eprintln!("Google transcribe: WAV spec - channels: {}, sample_rate: {}, bits_per_sample: {}", spec.channels, spec.sample_rate, spec.bits_per_sample);
-  
+
   if spec.bits_per_sample != 16 {
     return Err("Google Speech-to-Text requires 16-bit LINEAR16 audio".into());
   }
-  
+
   // Check if audio contains actual sound (not just silence)
   let samples: Vec<i16> = wav_reader.into_samples::<i16>()
     .filter_map(|s| s.ok())
     .collect();
-  
+
   if samples.is_empty() {
     return Err("Audio file contains no samples".into());
   }
-  
+
   // Check if audio is mostly silent (all samples near zero)
   let max_amplitude = samples.iter()
     .map(|&s| s.abs() as u32)
     .max()
     .unwrap_or(0);
-  
+
   eprintln!("Google transcribe: audio samples: {}, max amplitude: {}", samples.len(), max_amplitude);
-  
+
   // If max amplitude is very low, the audio is likely silent
   if max_amplitude < 100 {
     eprintln!("Google transcribe: WARNING - audio appears to be silent or very quiet (max amplitude: {})", max_amplitude);
@@ -541,7 +570,7 @@ async fn google_transcribe(
 
   let v: serde_json::Value = resp.json().await.map_err(|e| format!("json: {e}"))?;
   eprintln!("Google transcribe: response JSON: {:?}", v);
-  
+
   // Check if results field exists
   let text = if let Some(results) = v.get("results") {
     if let Some(results_array) = results.as_array() {
@@ -566,7 +595,7 @@ async fn google_transcribe(
     eprintln!("Google transcribe: no 'results' field in response - no speech detected");
     return Err("No speech detected in audio. The audio may be silent, too quiet, or the language may not match.".into());
   };
-  
+
   eprintln!("Google transcribe: extracted text: '{}'", text);
 
   Ok(TranscribeResponse { text })
@@ -645,6 +674,18 @@ fn save_settings(app: tauri::AppHandle, settings: AppSettings) -> Result<(), Str
 
   std::fs::write(&settings_path, content)
     .map_err(|e| format!("write settings: {e}"))?;
+
+  // Apply panel visibility setting
+  #[cfg(desktop)]
+  {
+    if let Some(panel) = app.get_webview_window("panel") {
+      if settings.panel_visible {
+        let _ = panel.show();
+      } else {
+        let _ = panel.hide();
+      }
+    }
+  }
 
   Ok(())
 }
@@ -735,10 +776,36 @@ pub fn run() {
           .build(&handle)?;
       }
 
-      // ---------- Panel default position ----------
+      // ---------- Panel default position and visibility ----------
       #[cfg(desktop)]
       {
         if let Some(panel) = app.get_webview_window("panel") {
+          // Apply panel visibility from settings
+          // Default to visible if settings don't exist or are corrupted
+          let settings = match get_settings(app.handle().clone()) {
+            Ok(s) => s,
+            Err(e) => {
+              eprintln!("Warning: Failed to load settings, using defaults: {}", e);
+              AppSettings::default()
+            }
+          };
+
+          eprintln!("Panel visibility setting: {}", settings.panel_visible);
+
+          // Only hide if explicitly set to false, otherwise show
+          if !settings.panel_visible {
+            eprintln!("Hiding panel based on settings");
+            if let Err(e) = panel.hide() {
+              eprintln!("Warning: Failed to hide panel: {:?}", e);
+            }
+          } else {
+            eprintln!("Showing panel (default or explicit setting)");
+            if let Err(e) = panel.show() {
+              eprintln!("Warning: Failed to show panel: {:?}", e);
+            }
+          }
+
+          // Set default position
           let margin = 64.0;
           let monitor = panel
             .current_monitor()
@@ -756,6 +823,8 @@ pub fn run() {
             let y = (monitor_size.height as i32 - window_size.height as i32 - margin_px).max(0);
             let _ = panel.set_position(PhysicalPosition::new(x, y));
           }
+        } else {
+          eprintln!("Error: Panel window not found during setup - this should not happen!");
         }
       }
 
@@ -787,7 +856,9 @@ pub fn run() {
       paste_text,
       get_settings,
       save_settings,
-      list_input_devices
+      list_input_devices,
+      show_panel,
+      hide_panel
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

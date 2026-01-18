@@ -8,6 +8,7 @@ interface Settings {
   google_api_key: string;
   google_language: string;
   input_device_name: string;
+  panel_visible: boolean;
 }
 
 interface InputDevice {
@@ -22,6 +23,7 @@ export default function Settings() {
     google_api_key: "",
     google_language: "en-US",
     input_device_name: "",
+    panel_visible: true,
   });
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -80,6 +82,7 @@ export default function Settings() {
         google_api_key: loaded.google_api_key || "",
         google_language: loaded.google_language || "en-US",
         input_device_name: loaded.input_device_name || "",
+        panel_visible: loaded.panel_visible !== undefined ? loaded.panel_visible : true,
       });
     } catch (e) {
       console.error("Failed to load settings:", e);
@@ -218,6 +221,23 @@ export default function Settings() {
           </div>
         </div>
       )}
+
+      <div style={{ marginTop: 24 }}>
+        <label style={{ display: "block", marginBottom: 8, fontSize: 14, fontWeight: 500 }}>
+          Floating Recording Panel
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
+          <input
+            type="checkbox"
+            checked={settings.panel_visible}
+            onChange={(e) => setSettings({ ...settings, panel_visible: e.target.checked })}
+          />
+          Show floating recording panel
+        </label>
+        <div style={{ marginTop: 4, fontSize: 12, color: "#666" }}>
+          Toggle the visibility of the floating recording panel. You can also use the tray menu to show/hide it.
+        </div>
+      </div>
 
       <div style={{ marginTop: 24 }}>
         <label style={{ display: "block", marginBottom: 8, fontSize: 14, fontWeight: 500 }}>
