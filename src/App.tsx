@@ -8,14 +8,20 @@ import "./App.css";
 type Phase = "IDLE" | "RECORDING" | "TRANSCRIBING" | "PASTING" | "DONE" | "ERROR";
 
 interface Settings {
+  provider: string;
   openai_api_key: string;
+  google_api_key: string;
+  google_language: string;
 }
 
 export default function App() {
   const [windowLabel, setWindowLabel] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("IDLE");
   const [message, setMessage] = useState<string>("");
-  const [apiKey, setApiKey] = useState<string>("");
+  const [provider, setProvider] = useState<"openai" | "google">("openai");
+  const [openaiApiKey, setOpenaiApiKey] = useState<string>("");
+  const [googleApiKey, setGoogleApiKey] = useState<string>("");
+  const [googleLanguage, setGoogleLanguage] = useState<string>("en-US");
   const lastHandledRef = useRef<number>(0);
   const recordingRef = useRef<boolean>(false);
   const lastPathRef = useRef<string | null>(null);
@@ -61,7 +67,10 @@ export default function App() {
   const loadSettings = async () => {
     try {
       const settings = await invoke<Settings>("get_settings");
-      setApiKey(settings.openai_api_key || "");
+      setProvider(settings.provider === "google" ? "google" : "openai");
+      setOpenaiApiKey(settings.openai_api_key || "");
+      setGoogleApiKey(settings.google_api_key || "");
+      setGoogleLanguage(settings.google_language || "en-US");
     } catch (e) {
       console.error("Failed to load settings:", e);
     }
@@ -107,23 +116,52 @@ export default function App() {
           const stopped = await invoke<{ path: string; sample_rate: number; duration_ms: number }>("stop_recording");
           console.log("Recording stopped:", stopped);
 
-          let keyToUse = apiKey?.trim() ?? "";
-          if (!keyToUse) {
+          let providerToUse = provider;
+          let openaiKeyToUse = openaiApiKey?.trim() ?? "";
+          let googleKeyToUse = googleApiKey?.trim() ?? "";
+          let googleLanguageToUse = googleLanguage?.trim() ?? "";
+          const needsRefresh =
+            !providerToUse ||
+            (providerToUse === "openai" && !openaiKeyToUse) ||
+            (providerToUse === "google" && !googleKeyToUse);
+
+          if (needsRefresh) {
             // Reload settings in case the key was just saved
             const latest = await invoke<Settings>("get_settings");
-            keyToUse = (latest.openai_api_key || "").trim();
-            setApiKey(keyToUse);
+            providerToUse = latest.provider === "google" ? "google" : "openai";
+            openaiKeyToUse = (latest.openai_api_key || "").trim();
+            googleKeyToUse = (latest.google_api_key || "").trim();
+            googleLanguageToUse = (latest.google_language || "").trim();
+            setProvider(providerToUse);
+            setOpenaiApiKey(openaiKeyToUse);
+            setGoogleApiKey(googleKeyToUse);
+            setGoogleLanguage(googleLanguageToUse || "en-US");
           }
-          if (!keyToUse) {
+          if (providerToUse === "openai" && !openaiKeyToUse) {
             throw new Error("Please set your OpenAI API key in Settings");
+          }
+          if (providerToUse === "google" && !googleKeyToUse) {
+            throw new Error("Please set your Google API key in Settings");
+          }
+          if (providerToUse === "google" && !googleLanguageToUse) {
+            googleLanguageToUse = "en-US";
           }
 
           // Transcribe
-          const { text } = await invoke<{ text: string }>("openai_transcribe", {
-            audioPath: stopped.path,
-            apiKey: keyToUse,
-            model: "whisper-1",
-          });
+          const { text } =
+            providerToUse === "google"
+              ? await invoke<{ text: string }>("google_transcribe", {
+                  audioPath: stopped.path,
+                  apiKey: googleKeyToUse,
+                  language: googleLanguageToUse,
+                  model: "default",
+                  enableAutomaticPunctuation: true,
+                })
+              : await invoke<{ text: string }>("openai_transcribe", {
+                  audioPath: stopped.path,
+                  apiKey: openaiKeyToUse,
+                  model: "whisper-1",
+                });
 
           console.log("Transcribed text:", text);
 

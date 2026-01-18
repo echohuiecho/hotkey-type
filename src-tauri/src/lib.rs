@@ -1,8 +1,9 @@
 // src-tauri/src/lib.rs
+use base64::Engine;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, path::PathBuf, sync::Arc, thread};
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, PhysicalPosition};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 #[cfg(desktop)]
@@ -190,9 +191,24 @@ fn stop_recording() -> Result<RecordingStopped, String> {
   })
 }
 
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
 struct AppSettings {
+  provider: String,
   openai_api_key: String,
+  google_api_key: String,
+  google_language: String,
+}
+
+impl Default for AppSettings {
+  fn default() -> Self {
+    Self {
+      provider: "openai".to_string(),
+      openai_api_key: String::new(),
+      google_api_key: String::new(),
+      google_language: "en-US".to_string(),
+    }
+  }
 }
 
 #[derive(Serialize)]
@@ -255,6 +271,73 @@ async fn openai_transcribe(
   let text = v
     .get("text")
     .and_then(|x| x.as_str())
+    .unwrap_or("")
+    .to_string();
+
+  Ok(TranscribeResponse { text })
+}
+
+#[tauri::command]
+async fn google_transcribe(
+  audio_path: String,
+  api_key: String,
+  language: Option<String>,
+  model: Option<String>,
+  enable_automatic_punctuation: Option<bool>,
+) -> Result<TranscribeResponse, String> {
+  let file_bytes = tokio::fs::read(&audio_path)
+    .await
+    .map_err(|e| format!("read audio: {e}"))?;
+
+  let wav_reader =
+    hound::WavReader::open(&audio_path).map_err(|e| format!("wav open: {e}"))?;
+  let spec = wav_reader.spec();
+  if spec.bits_per_sample != 16 {
+    return Err("Google Speech-to-Text requires 16-bit LINEAR16 audio".into());
+  }
+
+  let encoded_audio = base64::engine::general_purpose::STANDARD.encode(file_bytes);
+  let language_code = language.unwrap_or_else(|| "en-US".to_string());
+  let model = model.unwrap_or_else(|| "default".to_string());
+  let enable_automatic_punctuation = enable_automatic_punctuation.unwrap_or(true);
+
+  let body = serde_json::json!({
+    "audio": { "content": encoded_audio },
+    "config": {
+      "enableAutomaticPunctuation": enable_automatic_punctuation,
+      "encoding": "LINEAR16",
+      "languageCode": language_code,
+      "model": model,
+      "sampleRateHertz": spec.sample_rate
+    }
+  });
+
+  let url = format!(
+    "https://speech.googleapis.com/v1p1beta1/speech:recognize?key={}",
+    api_key
+  );
+  let client = reqwest::Client::new();
+  let resp = client
+    .post(url)
+    .json(&body)
+    .send()
+    .await
+    .map_err(|e| format!("network: {e}"))?;
+
+  if !resp.status().is_success() {
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    return Err(format!("Google Speech error {status}: {body}"));
+  }
+
+  let v: serde_json::Value = resp.json().await.map_err(|e| format!("json: {e}"))?;
+  let text = v
+    .get("results")
+    .and_then(|r| r.get(0))
+    .and_then(|r| r.get("alternatives"))
+    .and_then(|a| a.get(0))
+    .and_then(|a| a.get("transcript"))
+    .and_then(|t| t.as_str())
     .unwrap_or("")
     .to_string();
 
@@ -424,6 +507,30 @@ pub fn run() {
           .build(&handle)?;
       }
 
+      // ---------- Panel default position ----------
+      #[cfg(desktop)]
+      {
+        if let Some(panel) = app.get_webview_window("panel") {
+          let margin = 64.0;
+          let monitor = panel
+            .current_monitor()
+            .ok()
+            .flatten()
+            .or_else(|| app.primary_monitor().ok().flatten());
+
+          if let Some(monitor) = monitor {
+            let scale_factor = monitor.scale_factor();
+            let margin_px = (margin * scale_factor).round() as i32;
+            let monitor_size = monitor.size();
+            let window_size = panel.outer_size().unwrap_or(*monitor_size);
+
+            let x = (monitor_size.width as i32 - window_size.width as i32 - margin_px).max(0);
+            let y = (monitor_size.height as i32 - window_size.height as i32 - margin_px).max(0);
+            let _ = panel.set_position(PhysicalPosition::new(x, y));
+          }
+        }
+      }
+
       // ---------- Global hotkey (Ctrl+Shift+T) ----------
       #[cfg(desktop)]
       {
@@ -448,6 +555,7 @@ pub fn run() {
       start_recording,
       stop_recording,
       openai_transcribe,
+      google_transcribe,
       paste_text,
       get_settings,
       save_settings
