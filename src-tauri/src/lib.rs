@@ -51,10 +51,41 @@ fn start_recording(app: tauri::AppHandle) -> Result<String, String> {
   std::fs::create_dir_all(&cache_dir).map_err(|e| format!("mkdir: {e}"))?;
   let path = cache_dir.join(format!("dictation-{}.wav", uuid::Uuid::new_v4()));
 
+  // Get settings to check for preferred input device
+  let settings = get_settings(app.clone())?;
+  
   let host = cpal::default_host();
-  let device = host
-    .default_input_device()
-    .ok_or("No default input device (mic)".to_string())?;
+  let device = if settings.input_device_name.is_empty() {
+    // Use default device
+    host
+      .default_input_device()
+      .ok_or("No default input device (mic)".to_string())?
+  } else {
+    // Find device by name
+    match host
+      .input_devices()
+      .map_err(|e| format!("list devices: {e}"))?
+      .find(|d| {
+        d.name()
+          .map(|n| n == settings.input_device_name)
+          .unwrap_or(false)
+      }) {
+      Some(device) => device,
+      None => {
+        eprintln!(
+          "Warning: Input device '{}' not found. Falling back to default device.",
+          settings.input_device_name
+        );
+        // Fall back to default device
+        host
+          .default_input_device()
+          .ok_or("No default input device (mic)".to_string())?
+      }
+    }
+  };
+
+  let device_name = device.name().unwrap_or_else(|_| "Unknown".to_string());
+  eprintln!("Start recording: using input device: {}", device_name);
 
   let config = device
     .default_input_config()
@@ -62,6 +93,8 @@ fn start_recording(app: tauri::AppHandle) -> Result<String, String> {
 
   let sample_rate = config.sample_rate().0;
   let channels = config.channels() as usize;
+  
+  eprintln!("Start recording: sample_rate: {}, channels: {}, format: {:?}", sample_rate, channels, config.sample_format());
 
   let (tx, rx) = crossbeam_channel::unbounded::<Vec<i16>>();
   let path_for_writer = path.clone();
@@ -75,11 +108,14 @@ fn start_recording(app: tauri::AppHandle) -> Result<String, String> {
       sample_format: hound::SampleFormat::Int,
     };
     let mut writer = hound::WavWriter::create(&path_for_writer, spec)?;
+    let mut total_samples = 0usize;
     while let Ok(chunk) = rx.recv() {
+      total_samples += chunk.len();
       for s in chunk {
         writer.write_sample(s)?;
       }
     }
+    eprintln!("Writer thread: wrote {} total samples", total_samples);
     writer.finalize()?;
     Ok(())
   });
@@ -91,6 +127,8 @@ fn start_recording(app: tauri::AppHandle) -> Result<String, String> {
   let start_instant = std::time::Instant::now();
   let duration_ms_shared = Arc::new(Mutex::new(0u64));
   let duration_ms_cb = duration_ms_shared.clone();
+  let chunks_received = Arc::new(Mutex::new(0usize));
+  let chunks_received_cb = chunks_received.clone();
 
   let stream = match config.sample_format() {
     cpal::SampleFormat::F32 => device
@@ -105,6 +143,19 @@ fn start_recording(app: tauri::AppHandle) -> Result<String, String> {
             let v = frame[0].clamp(-1.0, 1.0);
             mono.push((v * i16::MAX as f32) as i16);
           }
+          
+          let chunk_num = {
+            let mut count = chunks_received_cb.lock();
+            *count += 1;
+            *count
+          };
+          
+          // Log first few chunks to verify audio is being captured
+          if chunk_num <= 3 {
+            let max_amp = mono.iter().map(|&s| s.abs()).max().unwrap_or(0);
+            eprintln!("Audio chunk #{}: {} samples, max amplitude: {}", chunk_num, mono.len(), max_amp);
+          }
+          
           let _ = tx_cb.send(mono);
         },
         err_fn,
@@ -121,6 +172,19 @@ fn start_recording(app: tauri::AppHandle) -> Result<String, String> {
           for frame in data.chunks(channels) {
             mono.push(frame[0]);
           }
+          
+          let chunk_num = {
+            let mut count = chunks_received_cb.lock();
+            *count += 1;
+            *count
+          };
+          
+          // Log first few chunks to verify audio is being captured
+          if chunk_num <= 3 {
+            let max_amp = mono.iter().map(|&s| s.abs()).max().unwrap_or(0);
+            eprintln!("Audio chunk #{}: {} samples, max amplitude: {}", chunk_num, mono.len(), max_amp);
+          }
+          
           let _ = tx_cb.send(mono);
         },
         err_fn,
@@ -138,6 +202,19 @@ fn start_recording(app: tauri::AppHandle) -> Result<String, String> {
             let v = frame[0] as i32 - 32768;
             mono.push(v as i16);
           }
+          
+          let chunk_num = {
+            let mut count = chunks_received_cb.lock();
+            *count += 1;
+            *count
+          };
+          
+          // Log first few chunks to verify audio is being captured
+          if chunk_num <= 3 {
+            let max_amp = mono.iter().map(|&s| s.abs()).max().unwrap_or(0);
+            eprintln!("Audio chunk #{}: {} samples, max amplitude: {}", chunk_num, mono.len(), max_amp);
+          }
+          
           let _ = tx_cb.send(mono);
         },
         err_fn,
@@ -169,6 +246,9 @@ fn stop_recording() -> Result<RecordingStopped, String> {
     .with(|state| state.borrow_mut().take())
     .ok_or("Not recording".to_string())?;
 
+  let path = rec.path.clone();
+  eprintln!("Stop recording: stopping stream and writer for {}", path.to_string_lossy());
+
   // stop capture by dropping stream, close writer by dropping tx
   drop(rec.stream);
   drop(rec.tx);
@@ -180,12 +260,33 @@ fn stop_recording() -> Result<RecordingStopped, String> {
     .map_err(|_| "writer thread panicked".to_string())?
     .map_err(|e| format!("writer failed: {e}"))?;
 
+  // On Windows, wait a bit for file system to catch up
+  #[cfg(windows)]
+  {
+    std::thread::sleep(std::time::Duration::from_millis(200));
+  }
+
+  // Verify file exists and has content
+  if !path.exists() {
+    return Err(format!("Recorded file does not exist: {}", path.to_string_lossy()));
+  }
+  
+  let file_size = std::fs::metadata(&path)
+    .map_err(|e| format!("get file metadata: {e}"))?
+    .len();
+  
+  eprintln!("Stop recording: file written, size: {} bytes", file_size);
+  
+  if file_size == 0 {
+    return Err("Recorded file is empty".into());
+  }
+
   // duration: best-effort using file size/time is OK for MVP; keep simple:
   // (you can store duration_ms in state if you want exact)
   let duration_ms = 0;
 
   Ok(RecordingStopped {
-    path: rec.path.to_string_lossy().to_string(),
+    path: path.to_string_lossy().to_string(),
     sample_rate: rec.sample_rate,
     duration_ms,
   })
@@ -198,6 +299,7 @@ struct AppSettings {
   openai_api_key: String,
   google_api_key: String,
   google_language: String,
+  input_device_name: String,
 }
 
 impl Default for AppSettings {
@@ -207,8 +309,41 @@ impl Default for AppSettings {
       openai_api_key: String::new(),
       google_api_key: String::new(),
       google_language: "en-US".to_string(),
+      input_device_name: String::new(), // Empty means use default
     }
   }
+}
+
+#[derive(Serialize)]
+struct InputDevice {
+  name: String,
+  is_default: bool,
+}
+
+#[tauri::command]
+fn list_input_devices() -> Result<Vec<InputDevice>, String> {
+  let host = cpal::default_host();
+  let default_device = host.default_input_device();
+  let default_name = default_device
+    .as_ref()
+    .and_then(|d| d.name().ok())
+    .unwrap_or_default();
+
+  let devices: Result<Vec<_>, _> = host
+    .input_devices()
+    .map(|devices| {
+      devices
+        .filter_map(|device| {
+          device.name().ok().map(|name| InputDevice {
+            is_default: name == default_name,
+            name,
+          })
+        })
+        .collect()
+    })
+    .map_err(|e| format!("list devices: {e}"));
+
+  devices
 }
 
 #[derive(Serialize)]
@@ -230,9 +365,29 @@ async fn openai_transcribe(
   // supports wav/webm/mp3/m4a etc.
   let url = "https://api.openai.com/v1/audio/transcriptions";
 
+  eprintln!("OpenAI transcribe: reading file from {}", audio_path);
+  
+  // On Windows, ensure file is ready by checking existence and size
+  let path = std::path::Path::new(&audio_path);
+  if !path.exists() {
+    return Err(format!("Audio file does not exist: {}", audio_path));
+  }
+  
+  // Small delay on Windows to ensure file is fully flushed
+  #[cfg(windows)]
+  {
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+  }
+
   let file_bytes = tokio::fs::read(&audio_path)
     .await
     .map_err(|e| format!("read audio: {e}"))?;
+  
+  eprintln!("OpenAI transcribe: read {} bytes from file", file_bytes.len());
+  
+  if file_bytes.is_empty() {
+    return Err("Audio file is empty".into());
+  }
 
   let file_part = reqwest::multipart::Part::bytes(file_bytes)
     .file_name("audio.wav")
@@ -261,18 +416,25 @@ async fn openai_transcribe(
     .await
     .map_err(|e| format!("network: {e}"))?;
 
-  if !resp.status().is_success() {
-    let status = resp.status();
+  let status = resp.status();
+  eprintln!("OpenAI transcribe: response status {}", status);
+
+  if !status.is_success() {
     let body = resp.text().await.unwrap_or_default();
+    eprintln!("OpenAI transcribe: error response body: {}", body);
     return Err(format!("OpenAI error {status}: {body}"));
   }
 
   let v: serde_json::Value = resp.json().await.map_err(|e| format!("json: {e}"))?;
+  eprintln!("OpenAI transcribe: response JSON: {:?}", v);
+  
   let text = v
     .get("text")
     .and_then(|x| x.as_str())
     .unwrap_or("")
     .to_string();
+  
+  eprintln!("OpenAI transcribe: extracted text: '{}'", text);
 
   Ok(TranscribeResponse { text })
 }
@@ -285,15 +447,59 @@ async fn google_transcribe(
   model: Option<String>,
   enable_automatic_punctuation: Option<bool>,
 ) -> Result<TranscribeResponse, String> {
+  eprintln!("Google transcribe: reading file from {}", audio_path);
+  
+  // On Windows, ensure file is ready by checking existence
+  let path = std::path::Path::new(&audio_path);
+  if !path.exists() {
+    return Err(format!("Audio file does not exist: {}", audio_path));
+  }
+  
+  // Small delay on Windows to ensure file is fully flushed
+  #[cfg(windows)]
+  {
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+  }
+
   let file_bytes = tokio::fs::read(&audio_path)
     .await
     .map_err(|e| format!("read audio: {e}"))?;
+  
+  eprintln!("Google transcribe: read {} bytes from file", file_bytes.len());
+  
+  if file_bytes.is_empty() {
+    return Err("Audio file is empty".into());
+  }
 
   let wav_reader =
     hound::WavReader::open(&audio_path).map_err(|e| format!("wav open: {e}"))?;
   let spec = wav_reader.spec();
+  eprintln!("Google transcribe: WAV spec - channels: {}, sample_rate: {}, bits_per_sample: {}", spec.channels, spec.sample_rate, spec.bits_per_sample);
+  
   if spec.bits_per_sample != 16 {
     return Err("Google Speech-to-Text requires 16-bit LINEAR16 audio".into());
+  }
+  
+  // Check if audio contains actual sound (not just silence)
+  let samples: Vec<i16> = wav_reader.into_samples::<i16>()
+    .filter_map(|s| s.ok())
+    .collect();
+  
+  if samples.is_empty() {
+    return Err("Audio file contains no samples".into());
+  }
+  
+  // Check if audio is mostly silent (all samples near zero)
+  let max_amplitude = samples.iter()
+    .map(|&s| s.abs() as u32)
+    .max()
+    .unwrap_or(0);
+  
+  eprintln!("Google transcribe: audio samples: {}, max amplitude: {}", samples.len(), max_amplitude);
+  
+  // If max amplitude is very low, the audio is likely silent
+  if max_amplitude < 100 {
+    eprintln!("Google transcribe: WARNING - audio appears to be silent or very quiet (max amplitude: {})", max_amplitude);
   }
 
   let encoded_audio = base64::engine::general_purpose::STANDARD.encode(file_bytes);
@@ -324,22 +530,44 @@ async fn google_transcribe(
     .await
     .map_err(|e| format!("network: {e}"))?;
 
-  if !resp.status().is_success() {
-    let status = resp.status();
+  let status = resp.status();
+  eprintln!("Google transcribe: response status {}", status);
+
+  if !status.is_success() {
     let body = resp.text().await.unwrap_or_default();
+    eprintln!("Google transcribe: error response body: {}", body);
     return Err(format!("Google Speech error {status}: {body}"));
   }
 
   let v: serde_json::Value = resp.json().await.map_err(|e| format!("json: {e}"))?;
-  let text = v
-    .get("results")
-    .and_then(|r| r.get(0))
-    .and_then(|r| r.get("alternatives"))
-    .and_then(|a| a.get(0))
-    .and_then(|a| a.get("transcript"))
-    .and_then(|t| t.as_str())
-    .unwrap_or("")
-    .to_string();
+  eprintln!("Google transcribe: response JSON: {:?}", v);
+  
+  // Check if results field exists
+  let text = if let Some(results) = v.get("results") {
+    if let Some(results_array) = results.as_array() {
+      if results_array.is_empty() {
+        eprintln!("Google transcribe: results array is empty - no speech detected");
+        return Err("No speech detected in audio. The audio may be silent or too quiet.".into());
+      }
+      results_array
+        .get(0)
+        .and_then(|r| r.get("alternatives"))
+        .and_then(|a| a.as_array())
+        .and_then(|a| a.get(0))
+        .and_then(|a| a.get("transcript"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("")
+        .to_string()
+    } else {
+      eprintln!("Google transcribe: results is not an array");
+      return Err("Invalid response format: results is not an array".into());
+    }
+  } else {
+    eprintln!("Google transcribe: no 'results' field in response - no speech detected");
+    return Err("No speech detected in audio. The audio may be silent, too quiet, or the language may not match.".into());
+  };
+  
+  eprintln!("Google transcribe: extracted text: '{}'", text);
 
   Ok(TranscribeResponse { text })
 }
@@ -558,7 +786,8 @@ pub fn run() {
       google_transcribe,
       paste_text,
       get_settings,
-      save_settings
+      save_settings,
+      list_input_devices
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

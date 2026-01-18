@@ -7,6 +7,12 @@ interface Settings {
   openai_api_key: string;
   google_api_key: string;
   google_language: string;
+  input_device_name: string;
+}
+
+interface InputDevice {
+  name: string;
+  is_default: boolean;
 }
 
 export default function Settings() {
@@ -15,9 +21,12 @@ export default function Settings() {
     openai_api_key: "",
     google_api_key: "",
     google_language: "en-US",
+    input_device_name: "",
   });
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [inputDevices, setInputDevices] = useState<InputDevice[]>([]);
+  const [loadingDevices, setLoadingDevices] = useState(true);
   const googleLanguageOptions = [
     { label: "English (United States) — en-US", value: "en-US" },
     { label: "English (United Kingdom) — en-GB", value: "en-GB" },
@@ -36,16 +45,30 @@ export default function Settings() {
   useEffect(() => {
     // Load settings on mount
     loadSettings();
+    loadInputDevices();
 
     // Listen for open-settings event
     const unlisten = listen("open-settings", () => {
       loadSettings();
+      loadInputDevices();
     });
 
     return () => {
       unlisten.then((fn) => fn());
     };
   }, []);
+
+  const loadInputDevices = async () => {
+    try {
+      setLoadingDevices(true);
+      const devices = await invoke<InputDevice[]>("list_input_devices");
+      setInputDevices(devices);
+    } catch (e) {
+      console.error("Failed to load input devices:", e);
+    } finally {
+      setLoadingDevices(false);
+    }
+  };
 
   const loadSettings = async () => {
     try {
@@ -56,6 +79,7 @@ export default function Settings() {
         openai_api_key: loaded.openai_api_key || "",
         google_api_key: loaded.google_api_key || "",
         google_language: loaded.google_language || "en-US",
+        input_device_name: loaded.input_device_name || "",
       });
     } catch (e) {
       console.error("Failed to load settings:", e);
@@ -194,6 +218,38 @@ export default function Settings() {
           </div>
         </div>
       )}
+
+      <div style={{ marginTop: 24 }}>
+        <label style={{ display: "block", marginBottom: 8, fontSize: 14, fontWeight: 500 }}>
+          Audio Input Device
+        </label>
+        {loadingDevices ? (
+          <div style={{ fontSize: 14, color: "#666" }}>Loading devices...</div>
+        ) : (
+          <select
+            value={settings.input_device_name}
+            onChange={(e) => setSettings({ ...settings, input_device_name: e.target.value })}
+            style={{
+              width: "100%",
+              padding: "8px 12px",
+              fontSize: 14,
+              border: "1px solid #ddd",
+              borderRadius: 4,
+              boxSizing: "border-box",
+            }}
+          >
+            <option value="">Default (System Default)</option>
+            {inputDevices.map((device) => (
+              <option key={device.name} value={device.name}>
+                {device.name} {device.is_default ? "(Default)" : ""}
+              </option>
+            ))}
+          </select>
+        )}
+        <div style={{ marginTop: 4, fontSize: 12, color: "#666" }}>
+          Select which microphone to use for recording. Leave as "Default" to use the system default.
+        </div>
+      </div>
 
       <div style={{ marginTop: 24, display: "flex", gap: 8, alignItems: "center" }}>
         <button
